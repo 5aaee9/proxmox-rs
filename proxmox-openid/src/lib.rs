@@ -30,6 +30,7 @@ use openidconnect::{
     RedirectUrl,
     Scope,
     UserInfoClaims,
+    RequestTokenError,
 };
 
 /// Stores Additional Claims into a serde_json::Value;
@@ -201,7 +202,29 @@ impl OpenIdAuthenticator {
             .exchange_code(code)
             .set_pkce_verifier(private_auth_state.pkce_verifier())
             .request(http_client)
-            .map_err(|err| format_err!("Failed to contact token endpoint: {}", err))?;
+            .map_err(|err| {
+                let msg = match err {
+                    RequestTokenError::ServerResponse(provider_err) => {
+                        format!("Server returned error response: {:?}", provider_err)
+                    },
+                    RequestTokenError::Request(req) => {
+                        format!("Request failed: {:?}", req)
+                    },
+                    RequestTokenError::Parse(parse_err, res) => {
+                        let body = match std::str::from_utf8(&res) {
+                            Ok(text) => text.to_string(),
+                            Err(_) => format!("{:?}", &res),
+                        };
+                        format!("Failed to parse server response: {} [response={:?}]",
+                            parse_err, body)
+                    },
+                    RequestTokenError::Other(msg) => {
+                        msg
+                    },
+                };
+                
+                format_err!("Failed to contact token endpoint: {}", msg)
+            })?;
 
         let id_token_verifier: CoreIdTokenVerifier = self.client.id_token_verifier();
         let id_token_claims: &CoreIdTokenClaims = token_response
